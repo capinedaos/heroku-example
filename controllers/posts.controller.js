@@ -1,7 +1,8 @@
-const { ref, uploadBytes } = require('firebase/storage');
+const { ref, uploadBytes, getDownloadURL } = require('firebase/storage');
 
 // Models
 const { Post } = require('../models/post.model');
+const { PostImg } = require('../models/postImg.model');
 const { User } = require('../models/user.model');
 const { Comment } = require('../models/comment.model');
 
@@ -39,29 +40,48 @@ const createPost = catchAsync(async (req, res, next) => {
 	const { title, content } = req.body;
 	const { sessionUser } = req;
 
-	const imgRef = ref(storage, `${Date.now()}_${req.file.originalname}`);
+	const newPost = await Post.create({
+		title,
+		content,
+		userId: sessionUser.id,
+	});
 
-	const imgRes = await uploadBytes(imgRef, req.file.buffer);
+	if (req.files.length > 0) {
+		const filesPromises = req.files.map(async file => {
+			const imgRef = ref(storage, `posts/${Date.now()}_${file.originalname}`);
+			const imgRes = await uploadBytes(imgRef, file.buffer);
 
-	console.log(imgRes);
+			return await PostImg.create({
+				postId: newPost.id,
+				imgUrl: imgRes.metadata.fullPath,
+			});
+		});
 
-	// const newPost = await Post.create({
-	// 	title,
-	// 	content,
-	// 	userId: sessionUser.id,
-	// });
+		await Promise.all(filesPromises);
+	}
 
-	// // Send mail when post has been created
-	// await new Email(sessionUser.email).sendNewPost(title, content);
+	// Send mail when post has been created
+	await new Email(sessionUser.email).sendNewPost(title, content);
 
 	res.status(201).json({
 		status: 'success',
-		// newPost,
+		newPost,
 	});
 });
 
 const getPostById = catchAsync(async (req, res, next) => {
 	const { post } = req;
+
+	// Map async
+	const postImgsPromises = post.postImgs.map(async postImg => {
+		const imgRef = ref(storage, postImg.imgUrl);
+
+		const imgFullPath = await getDownloadURL(imgRef);
+
+		postImg.imgUrl = imgFullPath;
+	});
+
+	await Promise.all(postImgsPromises);
 
 	res.status(200).json({
 		status: 'success',
